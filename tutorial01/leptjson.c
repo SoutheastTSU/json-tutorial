@@ -8,8 +8,6 @@ typedef struct {
     const char* json;
 }lept_context;
 
-typedef pair<int, int> P
-
 static void lept_parse_whitespace(lept_context* c) {
     const char *p = c->json;
     while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
