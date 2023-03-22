@@ -28,7 +28,9 @@ static int lept_parse_null(lept_context* c, lept_value* v) {
 
 static int lept_parse_true(lept_context* c, lept_value* v) {
     EXPECT(c, 't');
-    if(c->json[0] != 'r' || c->json[1] != 'u' || c->json[2] != 'e') { // what if c->json[2] causes index out of range?
+    // what if c->json[2] causes index out of range? -> this would not happen because '\0' will be read and terminate the conditioning
+    // const char* 的最后一位必然是'\0'，因此在读到'\0'时必定会触发不等于给定字符的条件，由于后面都是'||'运算，所以后面的语句都不会被执行（因为执行了也不影响结果）
+    if(c->json[0] != 'r' || c->json[1] != 'u' || c->json[2] != 'e') {
         return LEPT_PARSE_INVALID_VALUE;
     }
     c->json += 3;
@@ -66,10 +68,10 @@ int lept_parse(lept_value* v, const char* json) {
     int status = lept_parse_value(&c, v);
     if(status == LEPT_PARSE_OK){
         lept_parse_whitespace(&c); // eliminate ws after value
-        if(*c.json == '\0'){ // end of file
-            return LEPT_PARSE_OK;
+        if(*c.json == '\0'){ // end of string
+            return status;
         }
-        else{ // something that is not whitespace before end of file
+        else{ // something that is not whitespace before end of string
             return LEPT_PARSE_ROOT_NOT_SINGULAR;
         }
     }
