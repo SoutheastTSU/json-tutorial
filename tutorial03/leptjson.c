@@ -12,18 +12,20 @@
 #define EXPECT(c, ch)       do { assert(*c->json == (ch)); c->json++; } while(0)
 #define ISDIGIT(ch)         ((ch) >= '0' && (ch) <= '9')
 #define ISDIGIT1TO9(ch)     ((ch) >= '1' && (ch) <= '9')
+// lept_context_push() return ptr of start of ch(预先计算分配要压入的size(单位:字节)，char对象对应的size就是sizeof(char))
+// lept_context_push() 只对lept_context* c做了空间的预分配，没有压入确切的值。PUTC()将push函数返回的起始指针转为ch所属类的指针，并压入ch
 #define PUTC(c, ch)         do { *(char*)lept_context_push(c, sizeof(char)) = (ch); } while(0)
 
 typedef struct {
-    const char* json;
-    char* stack;
+    const char* json; // Json string
+    char* stack; // dynamic array
     size_t size, top;
 }lept_context;
 
-static void* lept_context_push(lept_context* c, size_t size) {
+static void* lept_context_push(lept_context* c, size_t size) { // used by macro 'PUTC'
     void* ret;
     assert(size > 0);
-    if (c->top + size >= c->size) {
+    if (c->top + size >= c->size) { // exceed max size, realloc
         if (c->size == 0)
             c->size = LEPT_PARSE_STACK_INIT_SIZE;
         while (c->top + size >= c->size)
@@ -32,12 +34,12 @@ static void* lept_context_push(lept_context* c, size_t size) {
     }
     ret = c->stack + c->top;
     c->top += size;
-    return ret;
+    return ret; // return ptr to top (before push) i.e. start of value that will be pushed 
 }
 
 static void* lept_context_pop(lept_context* c, size_t size) {
-    assert(c->top >= size);
-    return c->stack + (c->top -= size);
+    assert(c->top >= size); // number of elements must >= size to be poped
+    return c->stack + (c->top -= size); // return ptr to current top element
 }
 
 static void lept_parse_whitespace(lept_context* c) {
@@ -89,7 +91,7 @@ static int lept_parse_number(lept_context* c, lept_value* v) {
 static int lept_parse_string(lept_context* c, lept_value* v) {
     size_t head = c->top, len;
     const char* p;
-    EXPECT(c, '\"');
+    EXPECT(c, '\"'); // start '"'
     p = c->json;
     for (;;) {
         char ch = *p++;
@@ -99,7 +101,7 @@ static int lept_parse_string(lept_context* c, lept_value* v) {
                 lept_set_string(v, (const char*)lept_context_pop(c, len), len);
                 c->json = p;
                 return LEPT_PARSE_OK;
-            case '\0':
+            case '\0': // end without right quotation '\"'
                 c->top = head;
                 return LEPT_PARSE_MISS_QUOTATION_MARK;
             default:
@@ -135,7 +137,7 @@ int lept_parse(lept_value* v, const char* json) {
             ret = LEPT_PARSE_ROOT_NOT_SINGULAR;
         }
     }
-    assert(c.top == 0);
+    assert(c.top == 0); // all data poped
     free(c.stack);
     return ret;
 }
@@ -143,7 +145,7 @@ int lept_parse(lept_value* v, const char* json) {
 void lept_free(lept_value* v) {
     assert(v != NULL);
     if (v->type == LEPT_STRING)
-        free(v->u.s.s);
+        free(v->u.s.s); // free mem of string because mem of string is allocated by 'malloc'
     v->type = LEPT_NULL;
 }
 
@@ -183,9 +185,9 @@ size_t lept_get_string_length(const lept_value* v) {
 void lept_set_string(lept_value* v, const char* s, size_t len) {
     assert(v != NULL && (s != NULL || len == 0));
     lept_free(v);
-    v->u.s.s = (char*)malloc(len + 1);
+    v->u.s.s = (char*)malloc(len + 1); // malloc mem for string
     memcpy(v->u.s.s, s, len);
-    v->u.s.s[len] = '\0';
+    v->u.s.s[len] = '\0'; // append '\0' in the end (c std string)
     v->u.s.len = len;
     v->type = LEPT_STRING;
 }
