@@ -93,9 +93,16 @@ static int lept_parse_string(lept_context* c, lept_value* v) {
     const char* p;
     EXPECT(c, '\"'); // start '"'
     p = c->json;
-    for (;;) {
+    for (;;) { // while '\' is included in c string, there must be a 转义字符，并且读入的时候是把反斜杠和转义字符当成一个char
+        // 如果字符串里有'\\', 读的时候不是读成两个'\'而是直接读成一个'\'，同理'\n'不是先读一个反斜杠再读一个n，而是直接读成换行
         char ch = *p++;
         switch (ch) {
+            // case '\\':
+            //     if(*p=='\\'){
+            //         PUTC(c, '\\');
+            //         p++;
+            //     }
+            //     else PUTC(c, ch);
             case '\"':
                 len = c->top - head;
                 lept_set_string(v, (const char*)lept_context_pop(c, len), len);
@@ -155,12 +162,14 @@ lept_type lept_get_type(const lept_value* v) {
 }
 
 int lept_get_boolean(const lept_value* v) {
-    /* \TODO */
-    return 0;
+    assert(v!=NULL && (v->type==LEPT_FALSE || v->type==LEPT_TRUE));
+    return (v->type==LEPT_FALSE) ? 0 : 1;
 }
 
 void lept_set_boolean(lept_value* v, int b) {
-    /* \TODO */
+    assert(v!=NULL);
+    lept_free(&v);
+    v->type = (b==0) ? LEPT_FALSE : LEPT_TRUE;
 }
 
 double lept_get_number(const lept_value* v) {
@@ -169,7 +178,10 @@ double lept_get_number(const lept_value* v) {
 }
 
 void lept_set_number(lept_value* v, double n) {
-    /* \TODO */
+    assert(v!=NULL);
+    lept_free(&v);
+    v->u.n = n;
+    v->type = LEPT_NUMBER;
 }
 
 const char* lept_get_string(const lept_value* v) {

@@ -90,6 +90,7 @@ static int lept_parse_number(lept_context* c, lept_value* v) {
     return LEPT_PARSE_OK;
 }
 
+#define IS_HEX(c) (c) 
 static const char* lept_parse_hex4(const char* p, unsigned* u) {
     /* \TODO */
     return p;

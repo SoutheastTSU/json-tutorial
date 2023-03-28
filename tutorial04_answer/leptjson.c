@@ -104,12 +104,12 @@ static const char* lept_parse_hex4(const char* p, unsigned* u) {
     return p;
 }
 
-static void lept_encode_utf8(lept_context* c, unsigned u) {
-    if (u <= 0x7F) 
+static void lept_encode_utf8(lept_context* c, unsigned u) { //输入的是'/u'的码点，转为'/x'开头的十六进制数
+    if (u <= 0x7F) // 0xFF即01111111, u & 0xFF即保留u的后7位
         PUTC(c, u & 0xFF);
-    else if (u <= 0x7FF) {
-        PUTC(c, 0xC0 | ((u >> 6) & 0xFF));
-        PUTC(c, 0x80 | ( u       & 0x3F));
+    else if (u <= 0x7FF) { // 要提取出后面n位，就&与上后面n位都为1的十六进制数，比如保留后六位就是&0x3F, 八位就是0xFF.
+        PUTC(c, 0xC0 | ((u >> 6) & 0xFF)); // Bit1
+        PUTC(c, 0x80 | ( u       & 0x3F)); // Bit2 加前缀就直接或上前缀(比如这里是前缀10，后面接上6位，所以是或上10000000 i.e. 0x80)
     }
     else if (u <= 0xFFFF) {
         PUTC(c, 0xE0 | ((u >> 12) & 0xFF));
@@ -155,15 +155,15 @@ static int lept_parse_string(lept_context* c, lept_value* v) {
                         if (!(p = lept_parse_hex4(p, &u)))
                             STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_HEX);
                         if (u >= 0xD800 && u <= 0xDBFF) { /* surrogate pair */
-                            if (*p++ != '\\')
+                            if (*p++ != '\\') //先读转义符
                                 STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
-                            if (*p++ != 'u')
+                            if (*p++ != 'u') //再读u表示后面是正确的十六进制输入，正确的代理
                                 STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
-                            if (!(p = lept_parse_hex4(p, &u2)))
+                            if (!(p = lept_parse_hex4(p, &u2))) //再看是不是合法的十六进制
                                 STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_HEX);
-                            if (u2 < 0xDC00 || u2 > 0xDFFF)
+                            if (u2 < 0xDC00 || u2 > 0xDFFF) //是不是合法的低代理
                                 STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
-                            u = (((u - 0xD800) << 10) | (u2 - 0xDC00)) + 0x10000;
+                            u = (((u - 0xD800) << 10) | (u2 - 0xDC00)) + 0x10000; //高低代理换算，乘以0x400 <==> <<10
                         }
                         lept_encode_utf8(c, u);
                         break;

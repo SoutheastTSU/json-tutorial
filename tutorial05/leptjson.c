@@ -187,7 +187,7 @@ static int lept_parse_array(lept_context* c, lept_value* v) {
     size_t size = 0;
     int ret;
     EXPECT(c, '[');
-    if (*c->json == ']') {
+    if (*c->json == ']') { //数组中间啥也没有
         c->json++;
         v->type = LEPT_ARRAY;
         v->u.a.size = 0;
@@ -198,20 +198,21 @@ static int lept_parse_array(lept_context* c, lept_value* v) {
         lept_value e;
         lept_init(&e);
         if ((ret = lept_parse_value(c, &e)) != LEPT_PARSE_OK)
-            return ret;
-        memcpy(lept_context_push(c, sizeof(lept_value)), &e, sizeof(lept_value));
-        size++;
+            return ret; //返回错误值，解出来的value保存在e中
+        memcpy(lept_context_push(c, sizeof(lept_value)), &e, sizeof(lept_value)); // 把解包出来的内容塞进当前lept_context, lept_context_push返回的是压入的起始指针
+        size++; //数组内元素个数
         if (*c->json == ',')
-            c->json++;
-        else if (*c->json == ']') {
+            c->json++; //逗号，开始读下一个
+        else if (*c->json == ']') { // end of array
             c->json++;
             v->type = LEPT_ARRAY;
             v->u.a.size = size;
-            size *= sizeof(lept_value);
-            memcpy(v->u.a.e = (lept_value*)malloc(size), lept_context_pop(c, size), size);
+            size *= sizeof(lept_value); // size -> Bits
+            // array解出来之后，整个弹出复制进新malloc出来的内存。lept_context_pop()其实也就是改动一下lept_context动态栈里面的top指针，返回要弹出的起始位置
+            memcpy(v->u.a.e = (lept_value*)malloc(size), lept_context_pop(c, size), size); 
             return LEPT_PARSE_OK;
         }
-        else
+        else //否则json语法不规范
             return LEPT_PARSE_MISS_COMMA_OR_SQUARE_BRACKET;
     }
 }

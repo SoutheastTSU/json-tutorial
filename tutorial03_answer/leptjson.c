@@ -113,7 +113,7 @@ static int lept_parse_string(lept_context* c, lept_value* v) {
                     case 'n':  PUTC(c, '\n'); break;
                     case 'r':  PUTC(c, '\r'); break;
                     case 't':  PUTC(c, '\t'); break;
-                    default:
+                    default: // invalid 转义字符
                         c->top = head;
                         return LEPT_PARSE_INVALID_STRING_ESCAPE;
                 }
@@ -122,7 +122,7 @@ static int lept_parse_string(lept_context* c, lept_value* v) {
                 c->top = head;
                 return LEPT_PARSE_MISS_QUOTATION_MARK;
             default:
-                if ((unsigned char)ch < 0x20) { 
+                if ((unsigned char)ch < 0x20) { // 根据json标准，invalid字符
                     c->top = head;
                     return LEPT_PARSE_INVALID_STRING_CHAR;
                 }
@@ -163,7 +163,7 @@ int lept_parse(lept_value* v, const char* json) {
     return ret;
 }
 
-void lept_free(lept_value* v) {
+void lept_free(lept_value* v) { //free memory to avoid memory leak
     assert(v != NULL);
     if (v->type == LEPT_STRING)
         free(v->u.s.s);
@@ -206,6 +206,7 @@ size_t lept_get_string_length(const lept_value* v) {
     return v->u.s.len;
 }
 
+// use memcpy to copy const char* to v->u.s.s
 void lept_set_string(lept_value* v, const char* s, size_t len) {
     assert(v != NULL && (s != NULL || len == 0));
     lept_free(v);

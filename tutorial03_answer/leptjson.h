@@ -24,7 +24,7 @@ enum {
     LEPT_PARSE_INVALID_STRING_CHAR
 };
 
-#define lept_init(v) do { (v)->type = LEPT_NULL; } while(0)
+#define lept_init(v) do { (v)->type = LEPT_NULL; } while(0) // init before use to avoid error caused by 未初始化
 
 int lept_parse(lept_value* v, const char* json);
 
