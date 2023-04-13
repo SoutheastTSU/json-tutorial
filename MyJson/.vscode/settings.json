@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "leptjson.h": "c",
+        "stdlib.h": "c",
+        "iosfwd": "c",
+        "crtdbg.h": "c"
+    }
+}

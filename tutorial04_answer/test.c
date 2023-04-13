@@ -134,6 +134,7 @@ static void test_parse_string() {
 static void test_parse_expect_value() {
     TEST_ERROR(LEPT_PARSE_EXPECT_VALUE, "");
     TEST_ERROR(LEPT_PARSE_EXPECT_VALUE, " ");
+    TEST_ERROR(LEPT_PARSE_EXPECT_VALUE, " \t  \n  \r");
 }
 
 static void test_parse_invalid_value() {
@@ -153,6 +154,7 @@ static void test_parse_invalid_value() {
 
 static void test_parse_root_not_singular() {
     TEST_ERROR(LEPT_PARSE_ROOT_NOT_SINGULAR, "null x");
+    TEST_ERROR(LEPT_PARSE_ROOT_NOT_SINGULAR, "false \t\r\n   n");
 
     /* invalid number */
     TEST_ERROR(LEPT_PARSE_ROOT_NOT_SINGULAR, "0123"); /* after zero should be '.' or nothing */

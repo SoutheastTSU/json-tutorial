@@ -105,7 +105,7 @@ static const char* lept_parse_hex4(const char* p, unsigned* u) {
 }
 
 static void lept_encode_utf8(lept_context* c, unsigned u) { //输入的是'/u'的码点，转为'/x'开头的十六进制数
-    if (u <= 0x7F) // 0xFF即01111111, u & 0xFF即保留u的后7位
+    if (u <= 0x7F) // 0xFF即11111111, u & 0xFF即保留u的后8位
         PUTC(c, u & 0xFF);
     else if (u <= 0x7FF) { // 要提取出后面n位，就&与上后面n位都为1的十六进制数，比如保留后六位就是&0x3F, 八位就是0xFF.
         PUTC(c, 0xC0 | ((u >> 6) & 0xFF)); // Bit1
