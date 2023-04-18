@@ -1,11 +1,11 @@
 #define _CRTDBG_MAP_ALLOC
 #include <crtdbg.h> // maps malloc and free functions to their debug versions, track allocation and deallocation
-#include<stdlib.h>
-#include<string.h>
-#include<math.h>
-#include<errno.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include <stdio.h>
+#include <errno.h>
 #include "leptjson.h"
-
 
 
 #ifndef LEPT_PARSE_STACK_INIT_SIZE // init capacity of stack
@@ -29,7 +29,7 @@ typedef struct{
 static void* lept_context_push(lept_context* c, size_t size){ //size是要放入的char的数量
     void* ret;
     if(size + c->top >= c->size){ // need dynamicly expand space
-        if(c->size == 0)c->size = LEPT_PARSE_STACK_INIT_SIZE;
+        if(c->size == 0) c->size = LEPT_PARSE_STACK_INIT_SIZE;
         while(size + c->top > c->size){
             c->size *= 1.5;
         }
@@ -117,7 +117,6 @@ static int lept_parse_number(lept_context* c, lept_value* v){
 }
 
 static char* lept_parse_hex4(const char* p, unsigned* u){
-    char* tmp = p;
     char* ptr;
     if(ISHEX(*p) && ISHEX(*(p+1)) && ISHEX(*(p+2)) && ISHEX(*(p+3)) && !ISHEX(*(p+4))){
         *u = strtol(p, &ptr, 16);
@@ -151,7 +150,6 @@ static int lept_parse_string_raw(lept_context* c, char** pstr, size_t* plen) {
     // parse string from c->json and pass head pointer of string to *str, pass string length to *len
     unsigned u, u2;
     size_t head = c->top; // 记录初始top位
-    size_t len; // 字符串结束时，记录字符串长度（单位是字节）
     const char* p;
     EXPECT(c, '\"'); //保证是字符串
     p = c->json;
@@ -159,9 +157,8 @@ static int lept_parse_string_raw(lept_context* c, char** pstr, size_t* plen) {
         char ch = *p++;
         switch(ch){
             case '\"': // 字符串结束了，把缓冲堆栈里存储的字符串弹出来，设置到v中存储
-                len = c->top - head;
-                *plen = len;
-                *pstr = (char*)lept_context_pop(c, len);
+                *plen = c->top - head;
+                *pstr = (char*)lept_context_pop(c, *plen);
                 c->json = p; //更新c中的json指针，后续继续读取其他元素
                 return LEPT_PARSE_OK;
             case '\\': 
@@ -278,12 +275,16 @@ static int lept_parse_object(lept_context* c, lept_value* v){
         return LEPT_PARSE_OK;
     }
     for(;;){
-        lept_member m; // declare and init member
+        /* declare and init member, m.val是lept_value而非其指针类型。虽然m是循环局部变量，但是每次循环&m.val都是\
+        同一个地址...m.val.u.str.s也是一个地址...m.key不会被覆盖，因为m.key每次都是malloc开的一块新内存.\
+        m.val.u.str会被覆盖，因为m.val不是malloc出来的，而是在栈上自动创建的，每个循环的m，m.val, m.val.u...\
+        都是同样的地址.因此虽然看似每个循环都用memcpy(lept_context_push(c, sizeof(lept_member)), &m, sizeof(lept_member))\
+        把m复制进c，但是m.val.u下的一系列指针是可能会被后续循环修改值的(如果后续循环直接使用没初始化的&m.val作为lept_parse函数的输入）*/
+        lept_member m;
         m.key = NULL;
         m.keylen = 0;
-        m.val = NULL;
-        lept_value val; // declare and init value of key-value pair in member
-        lept_init(&val);
+        lept_value* val = (lept_value*)malloc(sizeof(lept_value)); // declare and init value of key-value pair in member
+        lept_init(val);
         if(*c->json != '\"'){ // start of key
             ret = LEPT_PARSE_MISS_KEY;
             break;
@@ -293,42 +294,40 @@ static int lept_parse_object(lept_context* c, lept_value* v){
             // ret == 0 为 LEPT_PARSE_OK，不为0代表出错，直接返回错误
             break;
         }
-        // 开辟一块内存存放key，指针交给m.key
-        // 为什么不直接m.key = &val? 因为val是for循环内的局部变量，创建在栈上，进入下一个循环之后就会失效
+        // 开辟一块内存存放key，指针交给m.key. 为啥需要一个中间变量char* tmp_key? 因为需要手动在末尾添加'\0'
         m.key = (char*)malloc(m.keylen + 1);
         memcpy(m.key, tmp_key, m.keylen);
         m.key[m.keylen] = '\0';
-
-        lept_parse_whitespace(c); //ws before and after ':'
+        // ':' and ws before and after ':'
+        lept_parse_whitespace(c); 
         if(*c->json++ != ':'){
             ret = LEPT_PARSE_MISS_COLON;
             break;
         }
         lept_parse_whitespace(c);
-
-        if( (ret = lept_parse_value(c, &val)) ){
+        // 读取key对应的value
+        if( (ret = lept_parse_value(c, val)) ){
             free(m.key);
-            lept_free(&val);
+            lept_free(val);
             break;
         }
-        // 开辟一块内存存放val，指针交给m.val, 因为val是局部变量
-        m.val = (lept_value*)malloc(sizeof(lept_value));
-        memcpy(m.val, &val, sizeof(lept_value)); 
-        // 解析一个member, 暂存进c
+        // 解析完一个member, 暂存进c
+        m.val = *val;
         memcpy(lept_context_push(c, sizeof(lept_member)), &m, sizeof(lept_member)); // copy e to temp stack in c->stack
-        size++; // 数组元素数量 += 1
+        size++; // 元素数量 += 1
         lept_parse_whitespace(c); // whitespace before comma/bracket
         if(*c->json == ','){
             c->json++; // next element
             lept_parse_whitespace(c); // whitespace after comma
         }
-        else if(*c->json == '}'){ //当前数组解析完毕，把c中暂存的内容弹出，memcpy到v
+        else if(*c->json == '}'){ //当前对象解析完毕，把c中暂存的内容弹出，memcpy到v
             c->json++;
             v->type = LEPT_OBJECT;
             v->u.obj.size = size;
             size *= sizeof(lept_member); // from num of elements -> size of memory
             v->u.obj.m = (lept_member*)malloc(size);
             memcpy(v->u.obj.m, lept_context_pop(c, size), size);
+
             return LEPT_PARSE_OK;
             // 这个分支是顺利完成解析的分支，已经将c中的内容正常全部取出交给v了
         }
@@ -339,7 +338,9 @@ static int lept_parse_object(lept_context* c, lept_value* v){
     }
     // 对于所有没有顺利完成解析的分支，pop from c and free array elements that have already been pushed
     for(int i=0; i<size; i++){
-        lept_free( ( (lept_member*)lept_context_pop(c, sizeof(lept_member)) )->val );
+        lept_member* free_m = (lept_member*)lept_context_pop(c, sizeof(lept_member));
+        free(free_m->key);
+        lept_free( &free_m->val );
     }
     return ret;
 }
@@ -457,7 +458,7 @@ size_t lept_get_object_key_length(const lept_value* v, size_t index){
 
 lept_value* lept_get_object_value(const lept_value* v, size_t index){
     assert(v != NULL && v->type == LEPT_OBJECT && index < v->u.obj.size);
-    return v->u.obj.m[index].val;
+    return &v->u.obj.m[index].val;
 }
 
 void lept_free(lept_value* v){ //这个free函数是要被各种lept_set_xx使用的
@@ -481,10 +482,258 @@ void lept_free(lept_value* v){ //这个free函数是要被各种lept_set_xx使�
     }
     if(v->type == LEPT_OBJECT){
         for(int i=0;i<v->u.obj.size;i++){
-            lept_free( v->u.obj.m[i].val ); // 递归地free掉lept_value类型的value
+            lept_free( &v->u.obj.m[i].val ); // 递归地free掉lept_value类型的value
             free(v->u.obj.m[i].key); // free掉key字符串
             v->u.obj.m[i].keylen = 0;
         }
+        free(v->u.obj.m);
     }
     v->type = LEPT_NULL;
+}
+
+// char* lept_stringify(const lept_value* v, size_t* length){
+//     return NULL;
+// }
+
+#define PUTS(c, s, size) memcpy(lept_context_push(c, size), s, size)
+
+static void lept_stringify_string(const char* s, lept_context* c, size_t len){
+    // 如果解析成功，放入c, 否则返回原c
+    char* p;
+    static const char hex_digits[] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
+    // 一个字符最多被转成"\uxxxx"6个字符，预先分配内存，减少一步一步调用PUTC PUTS中不断扩容的消耗
+    // 注意这样操作之后，下面不能调用PUTC PUTS（这两个宏都是在当前top基础上再往上开新空间，但是因为现有top已经是预先开辟到的位置，所以会有问题
+    p = lept_context_push(c, 6 * len); 
+    *p++ = '\"';
+    for(int i=0; i<len; i++){
+        unsigned char ch = (unsigned char)s[i];
+        switch(ch){
+            case '\"': *p++ = '\\'; *p++ = '\"'; break;
+            case '\\': *p++ = '\\'; *p++ = '\\'; break;
+            case '\b': *p++ = '\\'; *p++ = 'b'; break;
+            case '\f': *p++ = '\\'; *p++ = 'f'; break;
+            case '\n': *p++ = '\\'; *p++ = 'n'; break;
+            case '\r': *p++ = '\\'; *p++ = 'r'; break;
+            case '\t': *p++ = '\\'; *p++ = 't'; break;
+            default:
+                if(ch < 0x20){
+                    *p++ = '\\'; *p++ = 'u'; *p++ = '0'; *p++ = 'u';
+                    *p++ = hex_digits[ch>>4];
+                    *p++ = hex_digits[ch & 0xF];
+                    // char buffer[7];
+                    // // 将ch表示为"\u00xx"的格式(unsigned char最大256)
+                    // // '\\u'即"\u"转义，"%04X"代表占4位的十六进制数(大写)
+                    // sprintf(buffer, "\\u%04x", ch);
+                    // PUTS(c, buffer, 7);
+                }
+                else
+                    *p++ = s[i];
+        }
+    }
+    *p++ = '\"';
+    c->top -= (c->stack + c->top - p);
+}
+
+static int lept_stringify_value(const lept_value* v, lept_context* c){
+    int ret;
+    switch(v->type){
+        case LEPT_NULL: PUTS(c, "null", 4); break;
+        case LEPT_TRUE: PUTS(c, "true", 4); break;
+        case LEPT_FALSE: PUTS(c, "false", 5); break;
+        case LEPT_NUMBER:
+            /* sprintf: 将变量按照给定format格式存储为字符串，第一个参数是存储到的字符buffer的首指针
+            返回值是放入buffer的字符个数（不包括自动添加的末尾'\0') */
+            c->top -= 32 - sprintf(lept_context_push(c, 32), "%.17g", v->u.num); // sprintf要求给定的buffer的空间必须足够，所以先预设32的max_size，然后放入之后再缩小c->top
+            break;
+        case LEPT_STRING:
+            lept_stringify_string(v->u.str.s, c, v->u.str.len); break;
+        case LEPT_ARRAY:
+            PUTC(c, '[');
+            for(int i=0; i<v->u.arr.size; i++){
+                lept_stringify_value(&v->u.arr.e[i], c);
+                if(i == v->u.arr.size - 1) break; // 最后一个元素不加','
+                PUTC(c, ',');
+            }
+            PUTC(c, ']');
+            break;
+        case LEPT_OBJECT:
+            PUTC(c, '{');
+            for(int i=0; i<v->u.obj.size; i++){
+                lept_member m = v->u.obj.m[i];
+                lept_stringify_string(m.key, c, m.keylen); //处理key字符串
+                PUTC(c, ':');
+                lept_stringify_value(&m.val, c);
+                if(i == v->u.obj.size - 1) break; // 最后一个元素不加','
+                PUTC(c, ',');
+            }
+            PUTC(c, '}');
+            break;
+        default: break;
+    }
+    return LEPT_STRINGIFY_OK;
+}
+
+// int lept_stringify(const lept_value* v, char** json, size_t* length){ // length是可选参数
+//     lept_context c;
+//     int ret;
+//     assert(v != NULL);
+//     assert(json != NULL);
+//     // malloc一块内存，头指针交给c.stack, 当前内存的最大容量交给c.size, c.top指示当前标志位
+//     c.stack = (char*)malloc(c.size = LEPT_PARSE_STACK_INIT_SIZE);
+//     c.top = 0;
+//     if( (ret = lept_stringify_value(v, &c)) != LEPT_STRINGIFY_OK) {
+//         free(c.stack);
+//         *json = NULL; // 更改传入的指针为NULL，指示字符串化失败
+//         return ret;
+//     }
+//     // c在栈上，但是c->stack指向的内存块是malloc出来的，因此可以直接交给*json。
+//     if(length){
+//         *length = c.top; // 末尾的'\0'是不算在字符串的长度里的
+//     }
+//     PUTC(&c, '\0');
+//     *json = c.stack;
+//     return LEPT_STRINGIFY_OK;
+// }
+
+char* lept_stringify(const lept_value* v, size_t* length){ // length是可选参数
+    lept_context c;
+    int ret;
+    assert(v != NULL);
+    // malloc一块内存，头指针交给c.stack, 当前内存的最大容量交给c.size, c.top指示当前标志位
+    c.stack = (char*)malloc(c.size = LEPT_PARSE_STACK_INIT_SIZE);
+    c.top = 0;
+    if( (ret = lept_stringify_value(v, &c)) != LEPT_STRINGIFY_OK) {
+        free(c.stack);
+        return NULL;
+    }
+    // c在栈上，但是c->stack指向的内存块是malloc出来的，因此可以直接交给*json。
+    if(length){
+        *length = c.top; // 末尾的'\0'是不算在字符串的长度里的
+    }
+    PUTC(&c, '\0');
+    return c.stack;
+}
+
+size_t lept_find_object_index(const lept_value* v, const char* key, size_t klen) {
+    assert(v!=NULL && v->type == LEPT_OBJECT);
+    size_t i;
+    for(i=0; i<v->u.obj.size; i++){
+        if( v->u.obj.m[i].keylen == klen && memcmp(v->u.obj.m[i].key, key, klen) == 0) {
+            return i;
+        }
+    }
+    return LEPT_KEY_NOT_EXIST;
+}
+
+lept_value* lept_find_object_value(const lept_value* v, const char* key, size_t klen){
+    size_t index = lept_find_object_index(v, key, klen);
+    return index != LEPT_KEY_NOT_EXIST ? &v->u.obj.m[index].val : NULL;
+}
+
+int lept_is_equal(const lept_value* lhs, const lept_value* rhs){
+    assert(lhs != NULL && rhs != NULL);
+    if(lhs->type != rhs->type) return 0;
+    switch(lhs->type) {
+        case LEPT_STRING:
+            return lhs->u.str.len == rhs->u.str.len && \
+                memcmp(lhs->u.str.s, rhs->u.str.s, lhs->u.str.len) == 0;
+        case LEPT_NUMBER:
+            return lhs->u.num == rhs->u.num;
+        case LEPT_ARRAY:
+            if(lhs->u.arr.size != rhs->u.arr.size) return 0;
+            for(int i=0; i<lhs->u.arr.size; i++){ //数组元素顺序必须一致
+                if(0 == lept_is_equal(&lhs->u.arr.e[i], &rhs->u.arr.e[i]))
+                    return 0;
+            }
+            return 1;
+        case LEPT_OBJECT:
+            if(lhs->u.obj.size != rhs->u.obj.size) return 0; //首先保证包含的成员数量一致
+            for(int i=0; i<lhs->u.obj.size; i++){ // order of keys of objects can be different. 对每个lhs中的key-value，在rhs中找
+                lept_value* tmpV = lept_find_object_value(rhs, lhs->u.obj.m[i].key, lhs->u.obj.m[i].keylen);
+                if( tmpV == NULL || lept_is_equal(tmpV, &lhs->u.obj.m[i].val)==0){
+                    return 0;
+                }
+            }
+            return 1;
+        default:
+            return 1; // true, false, null, type相同就相同
+    }
+}
+
+void lept_copy(lept_value* dst, const lept_value* src){
+    assert(src != NULL && dst != NULL);
+    lept_free(dst);
+    size_t size; //size of array/object
+
+    lept_context c; //缓冲
+    c.stack = NULL;
+    c.top = c.size = 0;
+    
+    switch(src->type){
+        case LEPT_STRING:
+            lept_set_string(dst, src->u.str.s, src->u.str.len); //函数里面包含对type的更改
+            return;
+        case LEPT_OBJECT:
+        { // "{}" is apppended to allow declaration of variable in switch-case statement
+            size = src->u.obj.size;
+            dst->type = LEPT_OBJECT;
+            for(int i=0; i<size; i++){
+                lept_member m; //m只是容器，重要的是m.key和m.val.u里面的指针指向的资源的深拷贝
+                size_t srckeylen = src->u.obj.m[i].keylen;
+                m.key = (char*)malloc(srckeylen + 1); // end with '\0'
+                memcpy(m.key, src->u.obj.m[i].key, srckeylen);
+                m.key[srckeylen] = '\0';
+                m.keylen = srckeylen;
+                lept_value v;
+                // make sure to init v before use，因为在栈上创建v的变量很容易重复利用之前的空间，所以必须每次严格初始化
+                lept_init(&v); //注意lept_copy在执行的时候会首先对传入的第一个指针进行lept_free,所以如果没有初始化，v的type可能初始不为NULL，调用free导致出错
+                lept_copy(&v, &src->u.obj.m[i].val); //递归调用深拷贝函数
+                m.val = v; // 释放v->u内部指针的权力交给m
+                memcpy(lept_context_push(&c, sizeof(lept_member)), &m, sizeof(lept_member));
+            }
+            size *= sizeof(lept_member);
+            dst->u.obj.m = (lept_member*)malloc(size);
+            dst->u.obj.size = src->u.obj.size;
+            memcpy(dst->u.obj.m, lept_context_pop(&c, size), size);
+        }
+        break;
+        case LEPT_ARRAY:
+        {
+            size = src->u.arr.size;
+            dst->type = LEPT_ARRAY;
+            for(int i=0; i<size; i++){
+                lept_value v;
+                lept_init(&v);
+                lept_copy(&v, &src->u.arr.e[i]); //递归调用深拷贝函数
+                memcpy(lept_context_push(&c, sizeof(lept_value)), &v, sizeof(lept_value));
+            }
+            size *= sizeof(lept_value);
+            dst->u.arr.e = (lept_value*)malloc(size);
+            dst->u.arr.size = src->u.obj.size;
+            memcpy(dst->u.arr.e, lept_context_pop(&c, size), size);
+        }
+        break;
+        default: // 数字和逻辑变量不涉及到内存的管理（在lept_value中不是以指针方式存储）
+            memcpy(dst, src, sizeof(lept_value));
+            return;
+    }
+    assert(c.top==0);
+    free(c.stack);
+}
+
+void lept_move(lept_value* dst, lept_value* src){
+    assert(src!=NULL && dst!=NULL && dst != src);
+    lept_free(dst);
+    memcpy(dst, src, sizeof(lept_value));
+    lept_init(src);
+}
+
+void lept_swap(lept_value* lhs, lept_value* rhs){
+    assert(lhs!=NULL && rhs!=NULL);
+    if(lhs != rhs){
+        lept_value temp;
+        memcpy(&temp, lhs, sizeof(lept_value));
+        memcpy(lhs,   rhs, sizeof(lept_value));
+        memcpy(rhs, &temp, sizeof(lept_value));
+    }
 }

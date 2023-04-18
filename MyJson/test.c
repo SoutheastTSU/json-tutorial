@@ -28,8 +28,10 @@ static int test_pass = 0;
 #define EXPECT_EQ_INT(expect, actual) EXPECT_EQ_BASE((expect)==(actual), expect, actual, "%d")
 #define EXPECT_EQ_DOUBLE(expect, actual) EXPECT_EQ_BASE((expect)==(actual), expect, actual, "%.17g")
 // memcmp()的返回值并不是布尔量....0才代表两者相等......小于0大于0分别代表左边更小和右边更小.....
+// len代表字符串的长度（不考虑结尾的空字符）
+// 这里的expect和actual必须是原字符串，如果传入的是const char*，它的sizeof结果是指针本身的大小
 #define EXPECT_EQ_STRING(expect, actual, len) /*why sizeof(expect)-1? because of extra '\0'?*/ \
-        EXPECT_EQ_BASE(sizeof(expect)-1==len && memcmp(expect, actual, len) == 0, expect, actual, "%s");
+        EXPECT_EQ_BASE(sizeof(expect)-1==len && memcmp(expect, actual, len+1) == 0, expect, actual, "%s"); // 也要检查结尾是否正确添加了'\0'
 #define EXPECT_TRUE(actual) EXPECT_EQ_BASE((actual) != 0, "true", "false", "%s")
 #define EXPECT_FALSE(actual) EXPECT_EQ_BASE((actual) == 0, "false", "true", "%s")
 
@@ -51,6 +53,17 @@ static int test_pass = 0;
                                 EXPECT_EQ_INT(LEPT_STRING, lept_get_type(&v));\
                                 EXPECT_EQ_STRING(expect, lept_get_string(&v), lept_get_string_length(&v));\
                                 lept_free(&v);}while(0)
+
+// roundtrip测试，给定字符串json，先将其读取为lept_value存入v, 然后将v再stringify为json字符串存入json2，对比json和json2
+#define TEST_ROUNDTRIP(json) do{lept_value v; \
+                                char* json2; \
+                                size_t length; \
+                                lept_init(&v); \
+                                EXPECT_EQ_INT(LEPT_PARSE_OK, lept_parse(&v, json)); \
+                                json2 = lept_stringify(&v, &length); \
+                                EXPECT_EQ_STRING(json, json2, length);\
+                                lept_free(&v); \
+                                free(json2); }while(0)
 
 static void test_parse_null(){
     lept_value v;
@@ -378,33 +391,247 @@ static void test_parse_miss_comma_or_curly_bracket() {
     TEST_ERROR(LEPT_PARSE_MISS_COMMA_OR_CURLY_BRACKET, "{\"a\":{}");
 }
 
-static void test_parse(){
-    test_parse_null();
-    test_parse_true();
-    test_parse_false();
-    test_parse_number();
-    test_parse_string();
-    test_parse_array();
-    test_parse_expect_value();
-    test_parse_invalid();
-    test_parse_not_singular();    
-    test_parse_number_too_big();
-    test_parse_missing_quotation_mark();
-    test_parse_invalid_string_escape();
-    test_parse_invalid_string_char();
-    test_parse_invalid_unicode_hex();
-    test_parse_invalid_unicode_surrogate();
-    test_parse_array();
-    test_parse_miss_comma_or_square_bracket();
-    test_parse_miss_key();
-    test_parse_miss_colon();
-    test_parse_miss_comma_or_curly_bracket();
+static void test_stringify_number() {
+    TEST_ROUNDTRIP("0");
+    TEST_ROUNDTRIP("-0");
+    TEST_ROUNDTRIP("1");
+    TEST_ROUNDTRIP("-1");
+    TEST_ROUNDTRIP("1.5");
+    TEST_ROUNDTRIP("-1.5");
+    TEST_ROUNDTRIP("3.25");
+    TEST_ROUNDTRIP("1e+20");
+    TEST_ROUNDTRIP("1.234e+20");
+    TEST_ROUNDTRIP("1.234e-20");
 
-    test_parse_object();
-    test_access_null();
-    test_access_bool();
-    test_access_number();
-    test_access_string();
+    TEST_ROUNDTRIP("1.0000000000000002"); /* the smallest number > 1 */
+    TEST_ROUNDTRIP("4.9406564584124654e-324"); /* minimum denormal */
+    TEST_ROUNDTRIP("-4.9406564584124654e-324");
+    TEST_ROUNDTRIP("2.2250738585072009e-308");  /* Max subnormal double */
+    TEST_ROUNDTRIP("-2.2250738585072009e-308");
+    TEST_ROUNDTRIP("2.2250738585072014e-308");  /* Min normal positive double */
+    TEST_ROUNDTRIP("-2.2250738585072014e-308");
+    TEST_ROUNDTRIP("1.7976931348623157e+308");  /* Max double */
+    TEST_ROUNDTRIP("-1.7976931348623157e+308");
+}
+
+static void test_stringify_string() {
+    TEST_ROUNDTRIP("\"\"");
+    TEST_ROUNDTRIP("\"Hello\"");
+    TEST_ROUNDTRIP("\"Hello\\nWorld\"");
+    TEST_ROUNDTRIP("\"\\\" \\\\ / \\b \\f \\n \\r \\t\"");
+    TEST_ROUNDTRIP("\"Hello\\u0000World\"");
+}
+
+static void test_stringify_array() {
+    TEST_ROUNDTRIP("[]");
+    TEST_ROUNDTRIP("[null,false,true,123,\"abc\",[1,2,3]]");
+}
+
+static void test_stringify_object() {
+    TEST_ROUNDTRIP("{}");
+    TEST_ROUNDTRIP("{\"n\":null,\"f\":false,\"t\":true,\"i\":123,\"s\":\"abc\",\"a\":[1,2,3],\"o\":{\"1\":1,\"2\":2,\"3\":3}}");
+}
+
+static void test_stringify() {
+    TEST_ROUNDTRIP("null");
+    TEST_ROUNDTRIP("false");
+    TEST_ROUNDTRIP("true");
+    test_stringify_number();
+    test_stringify_string();
+    test_stringify_array();
+    test_stringify_object();
+}
+
+static void test_access_object(){
+    lept_value o, *v;
+    size_t index;
+    lept_init(&o);
+    lept_parse(&o, "{\"name\":\"Jenny\", \"gender\":\"Male\", \"gend\":\"female\", \"bool\":true}");
+    // find object with key == input "key" and length of key == size_t
+    if ((v = lept_find_object_value(&o, "gend", 4)) != NULL) {
+        printf("%s \n", lept_get_string(v)); //这种处理方式是已经知道v的type是LEPT_STRING了
+    }
+    lept_free(&o);
+}
+
+#define EXPECT_EQ_LEPT_VALUE(json1, json2, expect) do{lept_value v1, v2;\
+                                                        lept_init(&v1);\
+                                                        lept_init(&v2);\
+                                                        lept_parse(&v1, json1);\
+                                                        lept_parse(&v2, json2);\
+                                                        EXPECT_EQ_INT(expect, lept_is_equal(&v1, &v2));\
+                                                        lept_free(&v1);\
+                                                        lept_free(&v2);}while(0)
+
+static void test_lept_value_isequal(){
+    EXPECT_EQ_LEPT_VALUE("{\"name\":\"Jenny\", \"gender\":\"Male\", \"gend\":\"female\", \"bool\":true}", 
+        "{\"name\":\"Jenny\", \"gender\":\"Mae\", \"gend\":\"female\", \"bool\":true}", 0); // value中有一点不同
+    EXPECT_EQ_LEPT_VALUE("{\"name\":\"Jenny\", \"gender\":\"Male\", \"gen\":\"female\", \"bool\":true}", 
+        "{\"name\":\"Jenny\", \"gender\":\"Male\", \"gend\":\"female\", \"bool\":true}", 0); // key中有一点不同
+    EXPECT_EQ_LEPT_VALUE("{\"gend\":\"female\", \"gender\":\"Male\",  \"name\":\"Jenny\", \"bool\":true}", 
+    "{\"name\":\"Jenny\",  \"gender\":\"Male\", \"gend\":\"female\", \"bool\":true}", 1); // key-value顺序调换
+    EXPECT_EQ_LEPT_VALUE("{\"n\" : null , "
+                        "\"f\" : false , "
+                        "\"t\" : true , "
+                        "\"i\" : 123 , "
+                        "\"s\" : \"abc\", "
+                        "\"a\" : [ 1, 2, 3 ],"
+                        "\"o\" : { \"1\" : 1, \"2\" : 2, \"3\" : 3 } } ", 
+                        " {\"o\" : { \"1\" : 1, \"2\" : 2, \"3\" : 3 },"
+                        "\"f\" : false , "
+                        "\"n\" : null , "
+                        "\"t\" : true , "
+                        "\"s\" : \"abc\", "
+                        "\"i\" : 123 , "
+                        "\"a\" : [ 1, 2, 3 ] } ", 1);
+    EXPECT_EQ_LEPT_VALUE(" { "
+                        "\"n\" : null , "
+                        "\"f\" : false , "
+                        "\"t\" : true , "
+                        "\"i\" : 123 , "
+                        "\"s\" : \"abc\", "
+                        "\"a\" : [ 1, 2, 3 ],"
+                        "\"o\" : { \"1\" : 1, \"2\" : 2, \"3\" : 3 }"
+                        " } ", 
+                        " { "
+                        "\"n\" : null , "
+                        "\"f\" : false , "
+                        "\"t\" : true , "
+                        "\"i\" : 123 , "
+                        "\"s\" : \"abc\", "
+                        "\"a\" : [ 1, 2, 3 ],"
+                        "\"o\" : { \"1\" : 1, \"2\" : 2, \"3\" : 3 }"
+                        " } ", 1);
+    EXPECT_EQ_LEPT_VALUE(" { " // 嵌套数组有元素不同
+                        "\"n\" : null , "
+                        "\"f\" : false , "
+                        "\"t\" : true , "
+                        "\"i\" : 123 , "
+                        "\"s\" : \"abc\", "
+                        "\"a\" : [ 1, 2, 3 ],"
+                        "\"o\" : { \"1\" : 1, \"2\" : 2, \"3\" : 3 }"
+                        " } ", 
+                        " { "
+                        "\"a\" : [ 1, 0, 3 ],"
+                        "\"f\" : false , "
+                        "\"n\" : null , "
+                        "\"s\" : \"abc\", "
+                        "\"o\" : { \"1\" : 1, \"2\" : 2, \"3\" : 3 }"
+                        "\"t\" : true , "
+                        "\"i\" : 123 , "
+                        " } ", 0);
+    EXPECT_EQ_LEPT_VALUE(" { " // 嵌套数组有元素不同
+                        "\"n\" : null , "
+                        "\"f\" : false , "
+                        "\"t\" : true , "
+                        "\"i\" : 123 , "
+                        "\"s\" : \"abc\", "
+                        "\"a\" : [ 1, 2, 3 ],"
+                        "\"o\" : { \"1\" : 1, \"2\" : 2, \"3\" : 3 }"
+                        " } ", 
+                        " { "
+                        "\"a\" : [ 1, 2, 3 ],"
+                        "\"f\" : false , "
+                        "\"n\" : null , "
+                        "\"s\" : \"abc\", "
+                        "\"o\" : { \"1\" : 1, \"2\" : 0, \"3\" : 3 }"
+                        "\"t\" : true , "
+                        "\"i\" : 123 , "
+                        " } ", 0);
+}
+
+// v2 is a dependent copy of and v1 since 2 lept_free() does not cause error
+#define TEST_DEEPCOPY(json) do{lept_value v1, v2;\
+                                lept_init(&v1);\
+                                lept_init(&v2);\
+                                lept_parse(&v1, json);\
+                                lept_copy(&v2, &v1);\
+                                EXPECT_EQ_INT(1, lept_is_equal(&v1, &v2));\
+                                lept_free(&v1);\
+                                lept_free(&v2);}while(0)
+
+static void test_lept_value_deepcopy(){
+    TEST_DEEPCOPY("true");
+    TEST_DEEPCOPY("false");
+    TEST_DEEPCOPY("null");
+    TEST_DEEPCOPY("\"null\"");
+    TEST_DEEPCOPY("\"Jenny name\"");
+    TEST_DEEPCOPY("1234.5678");
+    // 纯字符串对象
+    TEST_DEEPCOPY("{\"name\":\"Jenny\", \"gender\":\"Male\", \"gend\":\"female\", \"bool\":true}");
+    // 嵌套字符串对象
+    TEST_DEEPCOPY("{\"name\":{\"1\": \"Jenny\", \"2\": \"Mark\"}, \"gender\":{\"1\":\"female\", \"2\":\"male\"}, \"gend\":\"female\", \"bool\":true}");
+    // 对象嵌套数组
+    TEST_DEEPCOPY("{\"name\":[\"Jenny\", \"Mark\"], \"gender\":[\"female\", \"male\"], \"gend\":\"female\", \"bool\":true}");
+    // 数组嵌套对象
+    TEST_DEEPCOPY("[{\"name\":[\"Jenny\", \"Mark\"]}, {\"gender\":[\"female\", \"male\"]}, {\"gend\":\"female\", \"bool\":true}]");
+    // 多层嵌套
+    TEST_DEEPCOPY("{[ {\"array\" : [1, true, \"Jenny\"]}, {[[1,2,3], 4, {\"5\": \"str\"}], [\"vector\", {\"map\":[null, false, \"adv\"]}]}], "
+    "[{\"name\":{\"1\": \"Jenny\", \"2\": \"Mark\"}, \"gender\":{\"1\":\"female\", \"2\":\"male\"}, \"gend\":\"female\", \"bool\":true}, "
+    "{\"n\":null,\"f\":false,\"t\":true,\"i\":123,\"s\":\"abc\",\"a\":[1,2,3],\"o\":{\"1\":1,\"2\":2,\"3\":3}}]}");
+}
+
+static void test_copy_move_swap(){
+    const char* json = "{\"a\":[1,2],\"b\":3}";
+    char *out;
+    lept_value v;
+    lept_init(&v);
+    lept_parse(&v, json);
+    lept_copy(
+        lept_find_object_value(&v, "b", 1),
+        lept_find_object_value(&v, "a", 1));
+    printf("%s\n", out = lept_stringify(&v, NULL)); /* {"a":[1,2],"b":[1,2]} */
+    free(out);
+
+    lept_parse(&v, json);
+    lept_move(
+        lept_find_object_value(&v, "b", 1),
+        lept_find_object_value(&v, "a", 1));
+    printf("%s\n", out = lept_stringify(&v, NULL)); /* {"a":null,"b":[1,2]} */
+    free(out);
+
+    lept_parse(&v, json);
+    lept_swap(
+        lept_find_object_value(&v, "b", 1),
+        lept_find_object_value(&v, "a", 1));
+    printf("%s\n", out = lept_stringify(&v, NULL)); /* {"a":3,"b":[1,2]} */
+    free(out);
+
+    lept_free(&v);
+}
+
+static void test_parse(){
+    // test_parse_null();
+    // test_parse_true();
+    // test_parse_false();
+    // test_parse_number();
+    // test_parse_string();
+    // test_parse_array();
+    // test_parse_expect_value();
+    // test_parse_invalid();
+    // test_parse_not_singular();    
+    // test_parse_number_too_big();
+    // test_parse_missing_quotation_mark();
+    // test_parse_invalid_string_escape();
+    // test_parse_invalid_string_char();
+    // test_parse_invalid_unicode_hex();
+    // test_parse_invalid_unicode_surrogate();
+    // test_parse_array();
+    // test_parse_miss_comma_or_square_bracket();
+    // test_parse_miss_key();
+    // test_parse_miss_colon();
+    // test_parse_miss_comma_or_curly_bracket();
+    // test_parse_object();
+
+    // test_access_null();
+    // test_access_bool();
+    // test_access_number();
+    // test_access_string();
+    // test_access_object();
+    // test_stringify();
+    // test_lept_value_isequal();
+    test_lept_value_deepcopy();
+    test_copy_move_swap();
 }
 
 int main() {

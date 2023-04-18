@@ -3,6 +3,8 @@
         "leptjson.h": "c",
         "stdlib.h": "c",
         "iosfwd": "c",
-        "crtdbg.h": "c"
+        "crtdbg.h": "c",
+        "*.tcc": "c",
+        "cstdio": "c"
     }
 }
